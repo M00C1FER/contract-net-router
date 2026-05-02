@@ -98,10 +98,15 @@ contract-net-router/
 Each agent produces a bid score in [0.0, 1.0]:
 
 ```
-score = (keyword_overlap × 0.5) + (specialty_match × 0.3) + (tier_bonus × 0.2)
+base  = (keyword_overlap × 0.6) + (specialty_match × 0.4)
+score = min(1.0, base × tier_weight)
 ```
 
-Deny-listed tools for a task type reduce score to 0.
+Tier weights: `command` 1.30 → `strategic` 1.15 → `tactical` 1.00 → `rapid` 0.80.
+
+When all agents score 0.0 (no keywords or specialties matched), the router
+returns `winning_agent=None`. Ties at equal score are broken alphabetically
+by agent name, guaranteeing deterministic output for identical input.
 
 ## Cross-Platform Notes
 
