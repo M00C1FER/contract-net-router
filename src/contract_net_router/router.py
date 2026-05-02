@@ -15,6 +15,7 @@ Optional: install sentence-transformers for semantic scoring.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import math
@@ -140,10 +141,22 @@ class ContractNetRouter:
         for name, cap in self._agents.items():
             bids[name] = self._bid(task, task_tokens, cap)
 
-        sorted_bids = sorted(bids.items(), key=lambda x: x[1], reverse=True)
+        # Sort descending by score; break ties by agent name for determinism.
+        sorted_bids = sorted(bids.items(), key=lambda x: (-x[1], x[0]))
         winner, win_score = sorted_bids[0]
         runner_up = sorted_bids[1][0] if len(sorted_bids) > 1 else None
         runner_score = sorted_bids[1][1] if len(sorted_bids) > 1 else 0.0
+
+        # No agent matched the task — all scores are zero.
+        if win_score == 0.0:
+            return RouteResult(
+                winning_agent=None,
+                score=0.0,
+                runner_up=None,
+                runner_up_score=0.0,
+                rationale="No agent matched the task (all bids were zero)",
+                all_bids={n: round(s, 4) for n, s in bids.items()},
+            )
 
         rationale = self._explain(winner, self._agents[winner], task_tokens,
                                   win_score)
@@ -354,3 +367,92 @@ class RoutingLog:
 def _tokenize(text: str) -> List[str]:
     """Lower-case word tokenizer (no NLTK dependency)."""
     return re.findall(r"[a-z0-9]+", text.lower())
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    """
+    Command-line interface for contract-net-router.
+
+    Sub-commands:
+      route       --task TEXT [--registry PATH] [--json]
+      list-agents [--registry PATH]
+    """
+    parser = argparse.ArgumentParser(
+        prog="cnr",
+        description="Contract Net Router — capability-matched agent task dispatch",
+    )
+    parser.add_argument(
+        "--registry",
+        default=None,
+        metavar="PATH",
+        help="Path to agents.yaml (overrides $CONTRACT_NET_AGENT_REGISTRY)",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # route
+    route_p = subparsers.add_parser("route", help="Route a task to the best agent")
+    route_p.add_argument("--task", required=True, help="Task description text")
+    route_p.add_argument(
+        "--json", dest="as_json", action="store_true", help="Output as JSON"
+    )
+
+    # list-agents
+    subparsers.add_parser("list-agents", help="List registered agents")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        return
+
+    # ── Load registry ──────────────────────────────────────────────────────
+    registry_path = args.registry or os.environ.get("CONTRACT_NET_AGENT_REGISTRY")
+    if registry_path:
+        router = load_registry(registry_path)
+    else:
+        # Built-in demo agents so `cnr route --task X` works out of the box
+        router = ContractNetRouter()
+        router.register(AgentCapability(
+            name="security-analyst", tier="tactical",
+            specialties=["binary analysis", "vulnerability assessment"],
+            keywords=["binary", "vulnerability", "CVE", "exploit", "disassemble"],
+            autonomy="supervised",
+        ))
+        router.register(AgentCapability(
+            name="data-analyst", tier="tactical",
+            specialties=["data processing", "statistical analysis"],
+            keywords=["CSV", "dataframe", "outlier", "statistics", "pandas"],
+            autonomy="autonomous",
+        ))
+
+    # ── Dispatch ───────────────────────────────────────────────────────────
+    if args.command == "route":
+        result = router.route(args.task)
+        if args.as_json:
+            print(json.dumps({
+                "winning_agent": result.winning_agent,
+                "score": result.score,
+                "runner_up": result.runner_up,
+                "runner_up_score": result.runner_up_score,
+                "rationale": result.rationale,
+                "all_bids": result.all_bids,
+            }))
+        else:
+            print(f"Winner:    {result.winning_agent}")
+            print(f"Score:     {result.score:.4f}")
+            if result.runner_up:
+                print(f"Runner-up: {result.runner_up} ({result.runner_up_score:.4f})")
+            print(f"Rationale: {result.rationale}")
+
+    elif args.command == "list-agents":
+        agents = router.list_agents()
+        if not agents:
+            print("No agents registered.")
+            return
+        for a in agents:
+            print(
+                f"  {a.name}  tier={a.tier}  "
+                f"keywords={len(a.keywords)}  specialties={len(a.specialties)}"
+            )
