@@ -1,0 +1,19 @@
+# Example agent capability registry
+agents:
+  - name: security-analyst
+    tier: tactical
+    specialties:
+      - binary analysis
+      - vulnerability assessment
+    keywords: [binary, vulnerability, CVE, exploit, disassemble]
+    autonomy: supervised
+    deny_tools: []
+
+  - name: data-analyst
+    tier: tactical
+    specialties:
+      - data processing
+      - statistical analysis
+    keywords: [CSV, dataframe, outlier, statistics, pandas]
+    autonomy: autonomous
+    deny_tools: []
