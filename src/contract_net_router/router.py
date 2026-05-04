@@ -284,7 +284,10 @@ def load_registry(path: str) -> ContractNetRouter:
         ) from exc
 
     with open(path, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+        try:
+            data = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Malformed YAML registry at '{path}': {exc}") from exc
 
     router = ContractNetRouter()
     for entry in data.get("agents", []):
