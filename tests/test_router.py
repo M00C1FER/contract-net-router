@@ -1,5 +1,6 @@
 """Smoke tests for contract-net-router."""
 import json
+import math
 import os
 import sys
 import tempfile
@@ -268,6 +269,44 @@ def test_budget_exceeded_transitions_to_violated(tmp_path):
     ]
     assert history[-1]["spent_tokens"] == 101
     assert history[-1]["spent_dollars"] == 1.01
+
+
+def test_nan_budget_rejected():
+    from contract_net_router import ContractBudget
+
+    with pytest.raises(ValueError, match="finite"):
+        ContractBudget(dollars=math.nan)
+    with pytest.raises(ValueError, match="finite"):
+        ContractBudget(dollars=math.inf)
+
+
+def test_nan_consumption_rejected():
+    from contract_net_router import ContractNetRouter
+
+    router = ContractNetRouter()
+    contract = router.award_contract(
+        task="Run the research workflow",
+        bidder="researcher",
+        budget={"dollars": 1.0},
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        router.report_consumption(contract.contract_id, {"dollars": math.nan})
+
+
+def test_exact_budget_match_does_not_violate():
+    from contract_net_router import ContractNetRouter, ContractState
+
+    router = ContractNetRouter()
+    contract = router.award_contract(
+        task="Run the research workflow",
+        bidder="researcher",
+        budget={"dollars": 0.30},
+    )
+
+    router.report_consumption(contract.contract_id, {"dollars": 0.1 + 0.2})
+
+    assert router.get_contract(contract.contract_id).state == ContractState.AWARDED
 
 
 def test_budget_conservation_recursive():
