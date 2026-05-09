@@ -23,6 +23,16 @@ Static routing tables break as agent rosters evolve. Contract Net Router impleme
 - Deny-list enforcement per agent
 - Programmatic and CLI interfaces
 
+## Formal governance
+
+*Agent Contracts (arxiv <a href="https://arxiv.org/abs/2601.08815">2601.08815</a>, COINE 2026) surveys 8 major LLM agent frameworks and concludes none provide formal governance mechanisms. `contract-net-router` is a publicly-available Python implementation of contract lifecycle states + budget conservation, the two governance primitives the paper identifies as universally missing.*
+
+- Contract lifecycle states: `PENDING → AWARDED → {FULFILLED, VIOLATED, EXPIRED, TERMINATED}`
+- Budget envelopes on contract awards: `{"tokens": int, "dollars": float}`
+- Automatic `VIOLATED` transition when reported cumulative spend exceeds budget
+- Recursive conservation check so delegated child budgets cannot exceed the parent contract
+- Queryable SQLite audit trail for contract state transitions
+
 ## Quick Start
 
 ```bash

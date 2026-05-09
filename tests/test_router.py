@@ -233,3 +233,97 @@ def test_score_bounded():
     result = router.route("a b c d e f g h task with everything")
     assert 0.0 <= result.score <= 1.0
 
+
+def test_budget_exceeded_transitions_to_violated(tmp_path):
+    from contract_net_router import ContractNetRouter, ContractState, RoutingLog
+
+    log = RoutingLog(db_path=str(tmp_path / "routing.db"))
+    router = ContractNetRouter(routing_log=log)
+
+    contract = router.award_contract(
+        task="Run the research workflow",
+        bidder="researcher",
+        budget={"tokens": 100, "dollars": 1.0},
+    )
+    assert contract.state == ContractState.AWARDED
+
+    router.report_consumption(
+        contract.contract_id,
+        {"tokens": 80, "dollars": 0.80},
+    )
+    assert router.get_contract(contract.contract_id).state == ContractState.AWARDED
+
+    router.report_consumption(
+        contract.contract_id,
+        {"tokens": 101, "dollars": 1.01},
+    )
+    breached = router.get_contract(contract.contract_id)
+    assert breached.state == ContractState.VIOLATED
+
+    history = log.contract_history(contract.contract_id)
+    assert [entry["to_state"] for entry in history] == [
+        "PENDING",
+        "AWARDED",
+        "VIOLATED",
+    ]
+    assert history[-1]["spent_tokens"] == 101
+    assert history[-1]["spent_dollars"] == 1.01
+
+
+def test_budget_conservation_recursive():
+    from contract_net_router import ContractNetRouter
+
+    router = ContractNetRouter()
+    parent = router.award_contract(
+        task="Three-agent research program",
+        bidder="manager",
+        budget={"dollars": 1.0},
+    )
+    literature = router.award_contract(
+        task="Literature scan",
+        bidder="agent-a",
+        budget={"dollars": 0.4},
+        parent_contract_id=parent.contract_id,
+    )
+    router.award_contract(
+        task="Evidence synthesis",
+        bidder="agent-b",
+        budget={"dollars": 0.3},
+        parent_contract_id=parent.contract_id,
+    )
+    router.award_contract(
+        task="Write executive brief",
+        bidder="agent-c",
+        budget={"dollars": 0.3},
+        parent_contract_id=parent.contract_id,
+    )
+    router.award_contract(
+        task="Collect citations",
+        bidder="agent-a1",
+        budget={"dollars": 0.2},
+        parent_contract_id=literature.contract_id,
+    )
+    router.award_contract(
+        task="Summarize papers",
+        bidder="agent-a2",
+        budget={"dollars": 0.2},
+        parent_contract_id=literature.contract_id,
+    )
+
+    assert router.check_budget_conservation(parent.contract_id) is True
+
+    with pytest.raises(ValueError, match="exceed parent contract"):
+        router.award_contract(
+            task="Overflow parent budget",
+            bidder="agent-d",
+            budget={"dollars": 0.01},
+            parent_contract_id=parent.contract_id,
+        )
+
+    with pytest.raises(ValueError, match="exceed parent contract"):
+        router.award_contract(
+            task="Overflow nested budget",
+            bidder="agent-a3",
+            budget={"dollars": 0.01},
+            parent_contract_id=literature.contract_id,
+        )

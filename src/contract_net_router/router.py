@@ -39,6 +39,43 @@ class AgentTier(str, Enum):
     COMMAND   = "command"     # Orchestrators (highest priority)
 
 
+class ContractState(str, Enum):
+    """Lifecycle states for an awarded contract."""
+
+    PENDING = "PENDING"
+    AWARDED = "AWARDED"
+    FULFILLED = "FULFILLED"
+    VIOLATED = "VIOLATED"
+    EXPIRED = "EXPIRED"
+    TERMINATED = "TERMINATED"
+
+
+_ALLOWED_CONTRACT_TRANSITIONS = {
+    ContractState.PENDING: {ContractState.AWARDED},
+    ContractState.AWARDED: {
+        ContractState.FULFILLED,
+        ContractState.VIOLATED,
+        ContractState.EXPIRED,
+        ContractState.TERMINATED,
+    },
+}
+
+
+def validate_contract_transition(
+    current_state: ContractState,
+    next_state: ContractState,
+) -> None:
+    """Raise ValueError when a contract lifecycle transition is illegal."""
+    if current_state == next_state:
+        return
+    allowed = _ALLOWED_CONTRACT_TRANSITIONS.get(current_state, set())
+    if next_state not in allowed:
+        raise ValueError(
+            f"Illegal contract transition: {current_state.value} -> "
+            f"{next_state.value}"
+        )
+
+
 # ── Data types ────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -75,6 +112,55 @@ class RouteResult:
     all_bids: Dict[str, float] = field(default_factory=dict)
 
 
+@dataclass
+class ContractBudget:
+    """Delegated budget envelope for a contract."""
+
+    tokens: Optional[int] = None
+    dollars: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.tokens is not None:
+            if not isinstance(self.tokens, int) or self.tokens < 0:
+                raise ValueError("Budget tokens must be a non-negative integer")
+        if self.dollars is not None:
+            self.dollars = float(self.dollars)
+            if self.dollars < 0:
+                raise ValueError("Budget dollars must be non-negative")
+
+    def to_dict(self) -> Dict[str, float]:
+        data: Dict[str, float] = {}
+        if self.tokens is not None:
+            data["tokens"] = self.tokens
+        if self.dollars is not None:
+            data["dollars"] = self.dollars
+        return data
+
+    def exceeds(self, limit: "ContractBudget") -> bool:
+        return (
+            limit.tokens is not None
+            and (self.tokens or 0) > limit.tokens
+        ) or (
+            limit.dollars is not None
+            and (self.dollars or 0.0) > limit.dollars
+        )
+
+
+@dataclass
+class ContractRecord:
+    """Tracked contract state for lifecycle governance."""
+
+    contract_id: str
+    task: str
+    bidder: str
+    budget: ContractBudget = field(default_factory=ContractBudget)
+    spent: ContractBudget = field(default_factory=ContractBudget)
+    state: ContractState = ContractState.PENDING
+    parent_contract_id: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+
 # ── Router ────────────────────────────────────────────────────────────────────
 
 class ContractNetRouter:
@@ -98,8 +184,15 @@ class ContractNetRouter:
         AgentTier.RAPID.value:     0.80,
     }
 
-    def __init__(self, use_semantic: bool = False) -> None:
+    def __init__(
+        self,
+        use_semantic: bool = False,
+        routing_log: Optional["RoutingLog"] = None,
+    ) -> None:
         self._agents: Dict[str, AgentCapability] = {}
+        self._contracts: Dict[str, ContractRecord] = {}
+        self._next_contract_id = 1
+        self._routing_log = routing_log
         self._use_semantic = use_semantic
         self._embedder = None
         if use_semantic:
@@ -120,6 +213,136 @@ class ContractNetRouter:
     def list_agents(self) -> List[AgentCapability]:
         """Return a copy of all registered agents."""
         return list(self._agents.values())
+
+    # ── Contract governance ──────────────────────────────────────────────────
+
+    def award_contract(
+        self,
+        task: str,
+        bidder: str,
+        budget: Optional[dict] = None,
+        parent_contract_id: Optional[str] = None,
+    ) -> ContractRecord:
+        """Create and award a governed contract, optionally beneath a parent."""
+        budget_envelope = _coerce_budget(budget)
+
+        if parent_contract_id is not None:
+            parent = self.get_contract(parent_contract_id)
+            sibling_budgets = [
+                child.budget for child in self._child_contracts(parent_contract_id)
+            ]
+            self._validate_child_budgets(
+                parent,
+                sibling_budgets + [budget_envelope],
+            )
+
+        contract_id = f"contract-{self._next_contract_id}"
+        self._next_contract_id += 1
+        contract = ContractRecord(
+            contract_id=contract_id,
+            task=task,
+            bidder=bidder,
+            budget=budget_envelope,
+            parent_contract_id=parent_contract_id,
+        )
+        self._contracts[contract_id] = contract
+        self._record_contract_transition(
+            contract,
+            from_state=None,
+            to_state=ContractState.PENDING,
+            note="contract created",
+        )
+        return self._transition_contract(
+            contract_id,
+            ContractState.AWARDED,
+            note="contract awarded",
+        )
+
+    def get_contract(self, contract_id: str) -> ContractRecord:
+        """Return a tracked contract by id."""
+        try:
+            return self._contracts[contract_id]
+        except KeyError as exc:
+            raise KeyError(f"Unknown contract_id: {contract_id}") from exc
+
+    def report_consumption(
+        self,
+        contract_id: str,
+        spent: Optional[dict] = None,
+    ) -> ContractRecord:
+        """
+        Record cumulative consumption for an awarded contract.
+
+        ``spent`` is cumulative rather than incremental; provided dimensions
+        must not move backwards.
+        """
+        contract = self.get_contract(contract_id)
+        if contract.state != ContractState.AWARDED:
+            raise ValueError(
+                "Consumption can only be reported while the contract is AWARDED"
+            )
+
+        reported = _coerce_budget(spent)
+        current = contract.spent
+        updated = ContractBudget(tokens=current.tokens, dollars=current.dollars)
+
+        if reported.tokens is not None:
+            if updated.tokens is not None and reported.tokens < updated.tokens:
+                raise ValueError("Cumulative token consumption cannot decrease")
+            updated.tokens = reported.tokens
+
+        if reported.dollars is not None:
+            if updated.dollars is not None and reported.dollars < updated.dollars:
+                raise ValueError("Cumulative dollar consumption cannot decrease")
+            updated.dollars = reported.dollars
+
+        contract.spent = updated
+        contract.updated_at = time.time()
+
+        if contract.spent.exceeds(contract.budget):
+            return self._transition_contract(
+                contract_id,
+                ContractState.VIOLATED,
+                note="budget exceeded",
+            )
+        return contract
+
+    def fulfill_contract(
+        self,
+        contract_id: str,
+        valid_result: bool = True,
+    ) -> ContractRecord:
+        """Resolve an awarded contract as fulfilled or violated."""
+        next_state = (
+            ContractState.FULFILLED if valid_result else ContractState.VIOLATED
+        )
+        note = "valid result returned" if valid_result else "invalid result returned"
+        return self._transition_contract(contract_id, next_state, note=note)
+
+    def expire_contract(self, contract_id: str) -> ContractRecord:
+        """Expire an awarded contract after timeout."""
+        return self._transition_contract(
+            contract_id,
+            ContractState.EXPIRED,
+            note="contract timed out",
+        )
+
+    def terminate_contract(self, contract_id: str, reason: str = "") -> ContractRecord:
+        """Terminate an awarded contract before completion."""
+        return self._transition_contract(
+            contract_id,
+            ContractState.TERMINATED,
+            note=reason or "contract terminated by manager",
+        )
+
+    def check_budget_conservation(self, contract_id: str) -> bool:
+        """Recursively verify that child budgets do not exceed each parent."""
+        contract = self.get_contract(contract_id)
+        children = self._child_contracts(contract_id)
+        self._validate_child_budgets(contract, [child.budget for child in children])
+        for child in children:
+            self.check_budget_conservation(child.contract_id)
+        return True
 
     # ── Routing ───────────────────────────────────────────────────────────────
 
@@ -256,6 +479,82 @@ class ContractNetRouter:
                            "falling back to keyword-only scoring")
             return None
 
+    def _transition_contract(
+        self,
+        contract_id: str,
+        next_state: ContractState,
+        note: str = "",
+    ) -> ContractRecord:
+        contract = self.get_contract(contract_id)
+        validate_contract_transition(contract.state, next_state)
+        previous_state = contract.state
+        contract.state = next_state
+        contract.updated_at = time.time()
+        self._record_contract_transition(
+            contract,
+            from_state=previous_state,
+            to_state=next_state,
+            note=note,
+        )
+        return contract
+
+    def _child_contracts(self, parent_contract_id: str) -> List[ContractRecord]:
+        return [
+            contract for contract in self._contracts.values()
+            if contract.parent_contract_id == parent_contract_id
+        ]
+
+    def _validate_child_budgets(
+        self,
+        parent: ContractRecord,
+        child_budgets: List[ContractBudget],
+    ) -> None:
+        if parent.budget.tokens is None:
+            if any((budget.tokens or 0) > 0 for budget in child_budgets):
+                raise ValueError(
+                    f"Parent contract {parent.contract_id} has no token budget to "
+                    "delegate"
+                )
+        else:
+            allocated_tokens = sum(budget.tokens or 0 for budget in child_budgets)
+            if allocated_tokens > parent.budget.tokens:
+                raise ValueError(
+                    f"Child token budgets exceed parent contract "
+                    f"{parent.contract_id}: {allocated_tokens} > "
+                    f"{parent.budget.tokens}"
+                )
+
+        if parent.budget.dollars is None:
+            if any((budget.dollars or 0.0) > 0.0 for budget in child_budgets):
+                raise ValueError(
+                    f"Parent contract {parent.contract_id} has no dollar budget to "
+                    "delegate"
+                )
+        else:
+            allocated_dollars = sum(budget.dollars or 0.0 for budget in child_budgets)
+            # Tiny tolerance avoids false violations from binary float rounding.
+            if allocated_dollars > parent.budget.dollars + 1e-9:
+                raise ValueError(
+                    f"Child dollar budgets exceed parent contract "
+                    f"{parent.contract_id}: {allocated_dollars:.2f} > "
+                    f"{parent.budget.dollars:.2f}"
+                )
+
+    def _record_contract_transition(
+        self,
+        contract: ContractRecord,
+        from_state: Optional[ContractState],
+        to_state: ContractState,
+        note: str = "",
+    ) -> None:
+        if self._routing_log is not None:
+            self._routing_log.record_contract_transition(
+                contract,
+                from_state=from_state,
+                to_state=to_state,
+                note=note,
+            )
+
 
 # ── YAML registry loader ───────────────────────────────────────────────────────
 
@@ -316,6 +615,23 @@ class RoutingLog:
         rationale TEXT,
         created_at REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS contract_transitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contract_id TEXT NOT NULL,
+        parent_contract_id TEXT,
+        task TEXT NOT NULL,
+        bidder TEXT NOT NULL,
+        from_state TEXT,
+        to_state TEXT NOT NULL,
+        budget_tokens INTEGER,
+        budget_dollars REAL,
+        spent_tokens INTEGER,
+        spent_dollars REAL,
+        note TEXT,
+        created_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_contract_transitions_contract
+    ON contract_transitions (contract_id, created_at);
     """
 
     def __init__(self, db_path: Optional[str] = None) -> None:
@@ -349,6 +665,36 @@ class RoutingLog:
         )
         conn.commit()
 
+    def record_contract_transition(
+        self,
+        contract: ContractRecord,
+        from_state: Optional[ContractState],
+        to_state: ContractState,
+        note: str = "",
+    ) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO contract_transitions "
+            "(contract_id, parent_contract_id, task, bidder, from_state, to_state, "
+            "budget_tokens, budget_dollars, spent_tokens, spent_dollars, note, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                contract.contract_id,
+                contract.parent_contract_id,
+                contract.task[:500],
+                contract.bidder,
+                from_state.value if from_state is not None else None,
+                to_state.value,
+                contract.budget.tokens,
+                contract.budget.dollars,
+                contract.spent.tokens,
+                contract.spent.dollars,
+                note[:500],
+                time.time(),
+            ),
+        )
+        conn.commit()
+
     def recent(self, limit: int = 20) -> List[dict]:
         conn = self._get_conn()
         rows = conn.execute(
@@ -358,6 +704,33 @@ class RoutingLog:
         ).fetchall()
         return [{"task": r[0], "winning_agent": r[1], "score": r[2],
                  "rationale": r[3], "created_at": r[4]} for r in rows]
+
+    def contract_history(self, contract_id: str) -> List[dict]:
+        """Return the ordered audit trail for a contract."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT contract_id, parent_contract_id, bidder, from_state, to_state, "
+            "budget_tokens, budget_dollars, spent_tokens, spent_dollars, note, "
+            "created_at FROM contract_transitions "
+            "WHERE contract_id = ? ORDER BY created_at ASC, id ASC",
+            (contract_id,),
+        ).fetchall()
+        return [
+            {
+                "contract_id": r[0],
+                "parent_contract_id": r[1],
+                "bidder": r[2],
+                "from_state": r[3],
+                "to_state": r[4],
+                "budget_tokens": r[5],
+                "budget_dollars": r[6],
+                "spent_tokens": r[7],
+                "spent_dollars": r[8],
+                "note": r[9],
+                "created_at": r[10],
+            }
+            for r in rows
+        ]
 
     def close(self) -> None:
         if self._conn:
@@ -370,6 +743,19 @@ class RoutingLog:
 def _tokenize(text: str) -> List[str]:
     """Lower-case word tokenizer (no NLTK dependency)."""
     return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _coerce_budget(budget: Optional[dict]) -> ContractBudget:
+    if budget is None:
+        return ContractBudget()
+    if isinstance(budget, ContractBudget):
+        return ContractBudget(tokens=budget.tokens, dollars=budget.dollars)
+    if not isinstance(budget, dict):
+        raise TypeError("budget must be a dict, ContractBudget, or None")
+    return ContractBudget(
+        tokens=budget.get("tokens"),
+        dollars=budget.get("dollars"),
+    )
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
