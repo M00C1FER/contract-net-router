@@ -125,6 +125,8 @@ class ContractBudget:
                 raise ValueError("Budget tokens must be a non-negative integer")
         if self.dollars is not None:
             self.dollars = float(self.dollars)
+            if not math.isfinite(self.dollars):
+                raise ValueError("Budget dollars must be finite")
             if self.dollars < 0:
                 raise ValueError("Budget dollars must be non-negative")
 
@@ -142,7 +144,7 @@ class ContractBudget:
             and (self.tokens or 0) > limit.tokens
         ) or (
             limit.dollars is not None
-            and (self.dollars or 0.0) > limit.dollars
+            and (self.dollars or 0.0) > limit.dollars + 1e-9
         )
 
 
