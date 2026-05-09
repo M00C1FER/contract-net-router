@@ -532,6 +532,7 @@ class ContractNetRouter:
                 )
         else:
             allocated_dollars = sum(budget.dollars or 0.0 for budget in child_budgets)
+            # Tiny tolerance avoids false violations from binary float rounding.
             if allocated_dollars > parent.budget.dollars + 1e-9:
                 raise ValueError(
                     f"Child dollar budgets exceed parent contract "
