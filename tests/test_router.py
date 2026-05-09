@@ -294,7 +294,7 @@ def test_nan_consumption_rejected():
         router.report_consumption(contract.contract_id, {"dollars": math.nan})
 
 
-def test_exact_budget_match_does_not_violate():
+def test_exact_budget_match_remains_awarded():
     from contract_net_router import ContractNetRouter, ContractState
 
     router = ContractNetRouter()
