@@ -6,6 +6,12 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL%20%7C%20Termux-lightgrey)](install.sh)
 
+## Protocol layer, not a framework
+
+`contract-net-router` implements the FIPA Contract Net Protocol (Smith 1980) for LLM agent dispatch. It is intentionally narrower than CrewAI or AutoGen: those are application frameworks; this is a protocol-level primitive they could be built on top of. Use it when role-based dispatch is insufficient — when you need a bid/award/audit lifecycle, not just "LLM, pick an agent."
+
+→ [When to use contract-net-router vs CrewAI / AutoGen](docs/decision-matrix.md)
+
 ## What It Does
 
 Static routing tables break as agent rosters evolve. Contract Net Router implements the FIPA Contract Net Protocol: a manager broadcasts a task, agents evaluate it against their capabilities and submit bids with confidence scores, and the router selects the highest-scoring match. Agents are defined in a YAML registry — no code changes needed to add or reconfigure agents.
@@ -111,6 +117,10 @@ by agent name, guaranteeing deterministic output for identical input.
 ## Cross-Platform Notes
 
 Pure Python stdlib — runs on Linux, WSL, and Termux identically.
+
+## Prior art
+
+Contract Net Protocol was specified by Reid G. Smith in 1980 (["The Contract Net Protocol: High-Level Communication and Control in a Distributed Problem Solver"](https://www.reidgsmith.com/The_Contract_Net_Protocol_Dec-1980.pdf)). The 2025 paper *Agent Contracts: A Formal Framework for Resource-Bounded Autonomous AI Systems* (arxiv [2601.08815](https://arxiv.org/abs/2601.08815), accepted COINE 2026) surveys 8 major LLM agent frameworks (LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, Google ADK, Amazon Bedrock, LlamaIndex, smolagents) and concludes none implement formal governance mechanisms. This repository is a modern Python implementation that surfaces CNP's formal-governance properties as first-class for LLM agent dispatch — the gap the literature explicitly identifies.
 
 ## License
 
