@@ -130,6 +130,19 @@ by agent name, guaranteeing deterministic output for identical input.
 
 Pure Python stdlib — runs on Linux, WSL, and Termux identically.
 
+## Framework Support
+
+| Framework | Adapter | Status |
+|-----------|---------|--------|
+| AutoGen | `src/contract_net_router/adapters/autogen_shim.py` | ✅ Full |
+| CrewAI | `src/contract_net_router/adapters/crewai_executor.py` | ✅ Full |
+| LangGraph | `src/contract_net_router/adapters/langgraph_adapter.py` | 🔧 Stub |
+| OpenAI Agents SDK | `src/contract_net_router/adapters/openai_agents_adapter.py` | 🔧 Stub |
+| Semantic Kernel | `src/contract_net_router/adapters/semantic_kernel_adapter.py` | 🔧 Stub |
+| Haystack | `src/contract_net_router/adapters/haystack_adapter.py` | 🔧 Stub |
+| DSPy | `src/contract_net_router/adapters/dspy_adapter.py` | 🔧 Stub |
+| LlamaIndex | `src/contract_net_router/adapters/llamaindex_adapter.py` | 🔧 Stub |
+
 ## Prior art
 
 Contract Net Protocol was specified by Reid G. Smith in 1980 (["The Contract Net Protocol: High-Level Communication and Control in a Distributed Problem Solver"](https://www.reidgsmith.com/The_Contract_Net_Protocol_Dec-1980.pdf)). The 2025 paper *Agent Contracts: A Formal Framework for Resource-Bounded Autonomous AI Systems* (arxiv [2601.08815](https://arxiv.org/abs/2601.08815), accepted COINE 2026) surveys 8 major LLM agent frameworks (LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, Google ADK, Amazon Bedrock, LlamaIndex, smolagents) and concludes none implement formal governance mechanisms. This repository is a modern Python implementation that surfaces CNP's formal-governance properties as first-class for LLM agent dispatch — the gap the literature explicitly identifies.
