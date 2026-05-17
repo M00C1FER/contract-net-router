@@ -1,5 +1,7 @@
 # Contract Net Router
 
+> Part of the [Agent Governance Stack](./GOVERNANCE-STACK.md) — dispatch · coordination · verification
+
 > Capability-based task routing for multi-agent AI systems — agents bid on tasks they're qualified for, and the best-match wins.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -131,6 +133,16 @@ Pure Python stdlib — runs on Linux, WSL, and Termux identically.
 ## Prior art
 
 Contract Net Protocol was specified by Reid G. Smith in 1980 (["The Contract Net Protocol: High-Level Communication and Control in a Distributed Problem Solver"](https://www.reidgsmith.com/The_Contract_Net_Protocol_Dec-1980.pdf)). The 2025 paper *Agent Contracts: A Formal Framework for Resource-Bounded Autonomous AI Systems* (arxiv [2601.08815](https://arxiv.org/abs/2601.08815), accepted COINE 2026) surveys 8 major LLM agent frameworks (LangGraph, AutoGen, CrewAI, OpenAI Agents SDK, Google ADK, Amazon Bedrock, LlamaIndex, smolagents) and concludes none implement formal governance mechanisms. This repository is a modern Python implementation that surfaces CNP's formal-governance properties as first-class for LLM agent dispatch — the gap the literature explicitly identifies.
+
+## Integration
+
+Minimal governed multi-agent wiring:
+
+1. Use `contract-net-router` to broadcast a task, collect bids, and award the winning agent.
+2. Use `common-operating-picture` to record the shared ledger task and lock the resource set before execution.
+3. Use `cli-parity-validator` to verify the winning agent's CLI environment exposes the expected tools before the task starts.
+
+This keeps dispatch, coordination, and environment verification as separate, auditable layers.
 
 ## License
 
