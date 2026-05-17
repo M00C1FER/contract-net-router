@@ -5,6 +5,7 @@
 > Capability-based task routing for multi-agent AI systems — agents bid on tasks they're qualified for, and the best-match wins.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/M00C1FER/contract-net-router/actions/workflows/ci.yml/badge.svg)](https://github.com/M00C1FER/contract-net-router/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL%20%7C%20Termux-lightgrey)](install.sh)
 
